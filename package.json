@@ -1,0 +1,41 @@
+{
+  "name": "rls-sentinel",
+  "version": "1.0.0",
+  "description": "Audit your Supabase / Postgres database for Row Level Security gaps, IDOR risks and multi-tenant data leaks — before your users (or an attacker) find them.",
+  "bin": {
+    "rls-sentinel": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js"
+  },
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "keywords": [
+    "supabase",
+    "postgres",
+    "rls",
+    "row-level-security",
+    "security",
+    "audit",
+    "idor",
+    "multi-tenant"
+  ],
+  "dependencies": {
+    "pg": "^8.13.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/pg": "^8.11.0",
+    "typescript": "^5"
+  },
+  "license": "SEE LICENSE IN LICENSE"
+}

@@ -1,0 +1,28 @@
+RLS Sentinel — Commercial License
+
+Copyright (c) 2026 operon-global
+
+Permission is granted to the individual or single organization that purchased
+this software (the "Licensee") to install and run it to audit databases the
+Licensee owns or is authorized to assess, for an unlimited number of projects,
+including paid client engagements performed by the Licensee.
+
+The Licensee MAY:
+  - Run the tool against their own and authorized clients' databases.
+  - Modify the source for their own internal use.
+  - Deliver the resulting reports to the owner of the audited database.
+
+The Licensee MAY NOT:
+  - Resell, redistribute, sublicense, or republish the tool itself (in whole or
+    substantial part), for free or for payment.
+  - Share the purchased source with parties outside the Licensee.
+
+Only run this tool against databases you own or have explicit written
+authorization to assess.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN
+AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RLS Sentinel report</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; background: #0f1115; color: #e7ebf0; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .sub { color: #8b94a3; font-size: 13px; margin-bottom: 24px; word-break: break-all; }
+  .score { font-size: 40px; font-weight: 800; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0 28px; }
+  .chip { border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 600; color: #fff; }
+  table { width: 100%; border-collapse: collapse; }
+  td { border-top: 1px solid #262b36; padding: 14px 10px; vertical-align: top; }
+  .sev { display: inline-block; border-radius: 6px; padding: 2px 8px; font-size: 11px; font-weight: 700; color: #fff; letter-spacing: .03em; }
+  .tbl { font-family: ui-monospace, monospace; font-size: 13px; color: #cbd3df; white-space: nowrap; }
+  .title { font-weight: 600; }
+  .detail { color: #9aa4b2; font-size: 13px; margin: 4px 0 8px; }
+  .fix { display: block; background: #171a21; border: 1px solid #262b36; border-radius: 6px; padding: 8px 10px; font-size: 12px; color: #3fe0b0; overflow-x: auto; }
+  .clean { color: #3fe0b0; font-size: 18px; font-weight: 600; }
+</style></head>
+<body><div class="wrap">
+  <h1>RLS Sentinel — security report</h1>
+  <div class="sub">Target: postgresql://postgres:****@db.demo-project.supabase.co:5432/postgres · 2026-10-08T15:57:31.356Z</div>
+  <div class="score" style="color:#dc2626">0<span style="font-size:18px;color:#8b94a3">/100</span></div>
+  <div class="chips">
+    <span class="chip" style="background:#b91c1c">2 critical</span>
+    <span class="chip" style="background:#dc2626">2 high</span>
+    <span class="chip" style="background:#d97706">1 medium</span>
+    <span class="chip" style="background:#0891b2">6 low</span>
+    <span class="chip" style="background:#64748b">3 info</span>
+  </div>
+  <table><tbody>
+      <tr>
+        <td><span class="sev" style="background:#b91c1c">CRITICAL</span></td>
+        <td class="tbl">documents</td>
+        <td>
+          <div class="title">Policy exposes all rows (USING true)</div>
+          <div class="detail">Policy &quot;docs_all&quot; on &quot;documents&quot; (SELECT) uses USING (true) for the public role, so any client reads every row in the table.</div>
+          <code class="fix">Replace with an ownership check, e.g. using (auth.uid() = user_id).</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#b91c1c">CRITICAL</span></td>
+        <td class="tbl">profiles</td>
+        <td>
+          <div class="title">Row Level Security is disabled</div>
+          <div class="detail">Table &quot;profiles&quot; is reachable by the anon role(s) but RLS is OFF. Every row is readable by anyone holding the public anon API key. This table looks user-owned (user_id), so this is a cross-tenant data leak.</div>
+          <code class="fix">alter table &quot;public&quot;.&quot;profiles&quot; enable row level security;  -- then add per-operation policies</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#dc2626">HIGH</span></td>
+        <td class="tbl">api_keys</td>
+        <td>
+          <div class="title">Insert policy has no WITH CHECK</div>
+          <div class="detail">Policy &quot;keys_ins&quot; on &quot;api_keys&quot; (INSERT) has no WITH CHECK, so an inserted row's ownership column is not validated — a user can create rows assigned to another user.</div>
+          <code class="fix">Add with check (auth.uid() = user_id) to the policy.</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#dc2626">HIGH</span></td>
+        <td class="tbl">subscriptions</td>
+        <td>
+          <div class="title">Policy checks authentication, not ownership</div>
+          <div class="detail">Policy &quot;subs_read&quot; on &quot;subscriptions&quot; (SELECT) only requires the caller to be logged in (no auth.uid() = owner check). Any authenticated user can reach every other user's rows.</div>
+          <code class="fix">Add an ownership predicate, e.g. using (auth.uid() = user_id).</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#d97706">MEDIUM</span></td>
+        <td class="tbl">subscriptions</td>
+        <td>
+          <div class="title">Ownership column &quot;user_id&quot; is nullable</div>
+          <div class="detail">On &quot;subscriptions&quot;, &quot;user_id&quot; allows NULL. A row with a NULL owner matches no &quot;auth.uid() = user_id&quot; policy, so it is invisible and un-deletable through the API, and a service-role insert that omits the owner creates an unprotected orphan row.</div>
+          <code class="fix">alter table &quot;public&quot;.&quot;subscriptions&quot; alter column &quot;user_id&quot; set not null;  -- after backfilling any NULLs</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#0891b2">LOW</span></td>
+        <td class="tbl">api_keys</td>
+        <td>
+          <div class="title">No SELECT policy</div>
+          <div class="detail">User-owned table &quot;api_keys&quot; has RLS on but no SELECT policy, so SELECT is denied to all clients. Intentional? If this table should support SELECT, add the policy.</div>
+          <code class="fix">create policy &quot;api_keys_select_own&quot; on &quot;public&quot;.&quot;api_keys&quot; for select using (auth.uid() = user_id);</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#0891b2">LOW</span></td>
+        <td class="tbl">api_keys</td>
+        <td>
+          <div class="title">No UPDATE policy</div>
+          <div class="detail">User-owned table &quot;api_keys&quot; has RLS on but no UPDATE policy, so UPDATE is denied to all clients. Intentional? If this table should support UPDATE, add the policy.</div>
+          <code class="fix">create policy &quot;api_keys_update_own&quot; on &quot;public&quot;.&quot;api_keys&quot; for update using (auth.uid() = user_id);</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#0891b2">LOW</span></td>
+        <td class="tbl">api_keys</td>
+        <td>
+          <div class="title">No DELETE policy</div>
+          <div class="detail">User-owned table &quot;api_keys&quot; has RLS on but no DELETE policy, so DELETE is denied to all clients. Intentional? If this table should support DELETE, add the policy.</div>
+          <code class="fix">create policy &quot;api_keys_delete_own&quot; on &quot;public&quot;.&quot;api_keys&quot; for delete using (auth.uid() = user_id);</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#0891b2">LOW</span></td>
+        <td class="tbl">subscriptions</td>
+        <td>
+          <div class="title">No INSERT policy</div>
+          <div class="detail">User-owned table &quot;subscriptions&quot; has RLS on but no INSERT policy, so INSERT is denied to all clients. Intentional? If this table should support INSERT, add the policy.</div>
+          <code class="fix">create policy &quot;subscriptions_insert_own&quot; on &quot;public&quot;.&quot;subscriptions&quot; for insert with check (auth.uid() = user_id);</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#0891b2">LOW</span></td>
+        <td class="tbl">subscriptions</td>
+        <td>
+          <div class="title">No UPDATE policy</div>
+          <div class="detail">User-owned table &quot;subscriptions&quot; has RLS on but no UPDATE policy, so UPDATE is denied to all clients. Intentional? If this table should support UPDATE, add the policy.</div>
+          <code class="fix">create policy &quot;subscriptions_update_own&quot; on &quot;public&quot;.&quot;subscriptions&quot; for update using (auth.uid() = user_id);</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#0891b2">LOW</span></td>
+        <td class="tbl">subscriptions</td>
+        <td>
+          <div class="title">No DELETE policy</div>
+          <div class="detail">User-owned table &quot;subscriptions&quot; has RLS on but no DELETE policy, so DELETE is denied to all clients. Intentional? If this table should support DELETE, add the policy.</div>
+          <code class="fix">create policy &quot;subscriptions_delete_own&quot; on &quot;public&quot;.&quot;subscriptions&quot; for delete using (auth.uid() = user_id);</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#64748b">INFO</span></td>
+        <td class="tbl">api_keys</td>
+        <td>
+          <div class="title">RLS is not forced (service role bypasses it)</div>
+          <div class="detail">On &quot;api_keys&quot;, RLS is enabled but not FORCED, so the service-role key bypasses it (by design). Any server code using that key must scope queries to a verified user id.</div>
+          <code class="fix">Resolve identity server-side with getUser()/getClaims(), never the unverified getSession(); optionally: alter table &quot;public&quot;.&quot;api_keys&quot; force row level security;</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#64748b">INFO</span></td>
+        <td class="tbl">subscriptions</td>
+        <td>
+          <div class="title">RLS is not forced (service role bypasses it)</div>
+          <div class="detail">On &quot;subscriptions&quot;, RLS is enabled but not FORCED, so the service-role key bypasses it (by design). Any server code using that key must scope queries to a verified user id.</div>
+          <code class="fix">Resolve identity server-side with getUser()/getClaims(), never the unverified getSession(); optionally: alter table &quot;public&quot;.&quot;subscriptions&quot; force row level security;</code>
+        </td>
+      </tr>
+      <tr>
+        <td><span class="sev" style="background:#64748b">INFO</span></td>
+        <td class="tbl">team_members</td>
+        <td>
+          <div class="title">RLS is not forced (service role bypasses it)</div>
+          <div class="detail">On &quot;team_members&quot;, RLS is enabled but not FORCED, so the service-role key bypasses it (by design). Any server code using that key must scope queries to a verified user id.</div>
+          <code class="fix">Resolve identity server-side with getUser()/getClaims(), never the unverified getSession(); optionally: alter table &quot;public&quot;.&quot;team_members&quot; force row level security;</code>
+        </td>
+      </tr></tbody></table>
+</div></body></html>
