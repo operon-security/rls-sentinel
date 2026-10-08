@@ -83,7 +83,15 @@ export async function introspect(
     ])
 
     return {
-      tables: tables.rows as TableInfo[],
+      // Map explicitly: the query returns snake_case columns. Casting the raw rows
+      // left rlsEnabled undefined, so every table was reported as RLS-disabled.
+      tables: tables.rows.map(
+        (r): TableInfo => ({
+          table: r.table,
+          rlsEnabled: r.rls_enabled === true,
+          rlsForced: r.rls_forced === true,
+        })
+      ),
       policies: policies.rows.map(
         (r): PolicyInfo => ({
           table: r.table,
