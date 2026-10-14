@@ -57,9 +57,11 @@ node dist/index.js
 ```
 
 Get the connection string from **Supabase dashboard → Project Settings →
-Database → Connection string (URI)**. The audit runs only read-only
-`SELECT`s against the Postgres system catalogs — it never reads your table data
-and never writes anything.
+Database → Connection string (URI)**. The audit runs four `SELECT`s against
+the Postgres system catalogs (`pg_class`, `pg_policy`, `pg_attribute`,
+`information_schema.role_table_grants`). It never reads your table data, and the
+session is set to `READ ONLY` at the database level before the first query, so
+Postgres itself would reject any write.
 
 ## Output formats & CI
 

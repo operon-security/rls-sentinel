@@ -75,6 +75,10 @@ export async function introspect(
 
   await client.connect()
   try {
+    // Defence in depth: every query below only reads system catalogs, but the
+    // session is also made read-only at the database level, so a future change
+    // that tries to write is rejected by Postgres instead of trusted to code review.
+    await client.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY')
     const [tables, policies, grants, ownerCols] = await Promise.all([
       client.query(Q_TABLES, [schema]),
       client.query(Q_POLICIES, [schema]),
