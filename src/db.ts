@@ -32,9 +32,11 @@ const Q_POLICIES = `
     pg_get_expr(pol.polqual, pol.polrelid) as using_expr,
     pg_get_expr(pol.polwithcheck, pol.polrelid) as check_expr,
     coalesce(
-      (select array_agg(r.rolname order by r.rolname)
+      -- rolname is type "name"; node-pg does not parse name[] into a JS array, so
+      -- cast to text[] or roles arrives as the string "{anon,authenticated}".
+      (select array_agg(r.rolname::text order by r.rolname)
          from pg_roles r where r.oid = any(pol.polroles) and r.rolname <> 'public'),
-      '{}'
+      '{}'::text[]
     ) as roles
   from pg_policy pol
   join pg_class c on c.oid = pol.polrelid
@@ -79,12 +81,11 @@ export async function introspect(
     // session is also made read-only at the database level, so a future change
     // that tries to write is rejected by Postgres instead of trusted to code review.
     await client.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY')
-    const [tables, policies, grants, ownerCols] = await Promise.all([
-      client.query(Q_TABLES, [schema]),
-      client.query(Q_POLICIES, [schema]),
-      client.query(Q_GRANTS, [schema]),
-      client.query(Q_OWNER_COLS, [schema, OWNERSHIP_COLUMNS]),
-    ])
+    // One client runs one query at a time; issue them in order.
+    const tables = await client.query(Q_TABLES, [schema])
+    const policies = await client.query(Q_POLICIES, [schema])
+    const grants = await client.query(Q_GRANTS, [schema])
+    const ownerCols = await client.query(Q_OWNER_COLS, [schema, OWNERSHIP_COLUMNS])
 
     return {
       // Map explicitly: the query returns snake_case columns. Casting the raw rows

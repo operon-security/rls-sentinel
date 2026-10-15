@@ -86,3 +86,10 @@ fails the build instead of leaking in production.
 
 ## License
 See `LICENSE`.
+
+## Verified against a live database
+
+`test/fixture.sql` builds one table per check with a known expected result. Run
+it on any Postgres (the project was verified on PGlite over TCP), then point
+the scanner at it with `?sslmode=disable` for a local server. Expected summary:
+2 critical, 2 high, 2 medium, `t_good` INFO only, `t_forced` no findings.
