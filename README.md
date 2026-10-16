@@ -93,3 +93,8 @@ See `LICENSE`.
 it on any Postgres (the project was verified on PGlite over TCP), then point
 the scanner at it with `?sslmode=disable` for a local server. Expected summary:
 2 critical, 2 high, 2 medium, `t_good` INFO only, `t_forced` no findings.
+
+## License
+
+MIT. Built and maintained by [Operon](https://operon-security.vercel.app) — Supabase and Next.js security reviews.
+If the scanner finds something and you want a second pair of eyes on the fix, that is what I do.
