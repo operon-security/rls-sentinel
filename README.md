@@ -28,6 +28,14 @@ and reports exactly where a multi-tenant app leaks — with the fix for each.
   Security score: 33/100
 ```
 
+## Quick start (60 seconds)
+
+```bash
+git clone https://github.com/operon-security/rls-sentinel
+cd rls-sentinel && npm install && npm run build
+node dist/index.js --url "postgresql://postgres:PASSWORD@db.YOURPROJECT.supabase.co:5432/postgres"
+```
+
 ## What it checks
 
 | Check | Severity | What it catches |
@@ -84,15 +92,19 @@ fails the build instead of leaking in production.
   your design (e.g. a deliberately public table). Read each one; it tells you
   what it saw and why.
 
-## License
-See `LICENSE`.
+## Tested against planted leaks
 
-## Verified against a live database
+`test/fixture.sql` builds one table per check, each with a known expected result,
+plus two correctly secured tables. Load it into any Postgres and point the scanner
+at it (`?sslmode=disable` for a local server without TLS). Measured result:
 
-`test/fixture.sql` builds one table per check with a known expected result. Run
-it on any Postgres (the project was verified on PGlite over TCP), then point
-the scanner at it with `?sslmode=disable` for a local server. Expected summary:
-2 critical, 2 high, 2 medium, `t_good` INFO only, `t_forced` no findings.
+```
+Summary:  2 crit   2 high   2 med   8 low   6 info      Verdict: AT RISK
+```
+
+Every planted issue is reported; the correctly secured table gets INFO only and the
+`FORCE ROW LEVEL SECURITY` table gets no findings. `--format json`, `--format html`
+and `--fail-on high` (exit code 1) were verified on the same fixture.
 
 ## License
 
