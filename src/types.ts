@@ -42,9 +42,32 @@ export interface OwnerColumn {
   nullable: boolean
 }
 
+export interface ViewInfo {
+  view: string
+  /** 'v' = view, 'm' = materialized view */
+  kind: 'v' | 'm'
+  /** security_invoker=true: the view runs with the caller's rights, so RLS applies. */
+  invoker: boolean
+  anonSelect: boolean
+  authSelect: boolean
+}
+
+export interface DefinerFunction {
+  name: string
+  args: string
+  anonExec: boolean
+  authExec: boolean
+  /** proconfig pins search_path (e.g. search_path=''). */
+  pinnedSearchPath: boolean
+  /** body references auth.uid(): a hint that it scopes to the caller, not proof. */
+  usesUid: boolean
+}
+
 export interface Schema {
   tables: TableInfo[]
   policies: PolicyInfo[]
   grants: GrantInfo[]
   ownerColumns: OwnerColumn[]
+  views: ViewInfo[]
+  definerFunctions: DefinerFunction[]
 }

@@ -49,6 +49,10 @@ node dist/index.js --url "postgresql://postgres:PASSWORD@db.YOURPROJECT.supabase
 | RLS on, no policies | MEDIUM | Default-deny — every query silently returns empty |
 | Missing per-command policy | LOW | Owned table with no SELECT/INSERT/UPDATE/DELETE policy |
 | RLS not forced | INFO | Service role bypasses RLS — server code must filter by a verified user id |
+| View bypasses RLS | CRITICAL/HIGH | A view readable by `anon`/`authenticated` that is not `security_invoker`: it runs with the owner's rights, so the underlying tables' RLS does not apply |
+| Materialized view exposed | CRITICAL/HIGH | Materialized views can't be `security_invoker`; if API roles can select them, their rows have no RLS at all |
+| Exposed `SECURITY DEFINER` function | HIGH/MEDIUM/INFO | Callable via `/rest/v1/rpc`, runs as the owner and skips RLS. HIGH if `anon` can call it and the body never references `auth.uid()`; INFO when it does (still: verify) |
+| Definer function with mutable `search_path` | MEDIUM/LOW | Unqualified names inside it resolve at call time and can be shadowed |
 
 ## Install & run
 
@@ -65,8 +69,8 @@ node dist/index.js
 ```
 
 Get the connection string from **Supabase dashboard → Project Settings →
-Database → Connection string (URI)**. The audit runs four `SELECT`s against
-the Postgres system catalogs (`pg_class`, `pg_policy`, `pg_attribute`,
+Database → Connection string (URI)**. The audit runs six `SELECT`s against
+the Postgres system catalogs (`pg_class`, `pg_policy`, `pg_attribute`, `pg_proc`,
 `information_schema.role_table_grants`). It never reads your table data, and the
 session is set to `READ ONLY` at the database level before the first query, so
 Postgres itself would reject any write.
@@ -102,7 +106,12 @@ at it (`?sslmode=disable` for a local server without TLS). Measured result:
 Summary:  2 crit   2 high   2 med   8 low   6 info      Verdict: AT RISK
 ```
 
-Every planted issue is reported; the correctly secured table gets INFO only and the
+That summary was measured on cases 1-8 (the table checks). Cases 9-12 (views and
+`SECURITY DEFINER` functions) were added later; their logic is tested on synthetic
+input and the queries were run against a live Supabase schema, but the full fixture
+has not been re-measured yet.
+
+Every planted table issue is reported; the correctly secured table gets INFO only and the
 `FORCE ROW LEVEL SECURITY` table gets no findings. `--format json`, `--format html`
 and `--fail-on high` (exit code 1) were verified on the same fixture.
 

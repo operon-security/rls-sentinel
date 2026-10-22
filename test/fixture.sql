@@ -52,3 +52,22 @@ alter table public.t_forced enable row level security;
 alter table public.t_forced force row level security;
 create policy p_own on public.t_forced for all to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 grant select, insert, update, delete on public.t_forced to authenticated;
+
+-- 9) view over an RLS table, owner's rights, readable by anon  -> CRITICAL (VIEW_BYPASSES_RLS)
+create view public.v_leak as select * from public.t_good;
+grant select on public.v_leak to anon, authenticated;
+
+-- 10) same view with security_invoker  -> no finding
+create view public.v_ok with (security_invoker = true) as select * from public.t_good;
+grant select on public.v_ok to anon, authenticated;
+
+-- 11) SECURITY DEFINER, callable by anon, never checks auth.uid(), mutable search_path
+--     -> HIGH (DEFINER_FUNCTION_EXPOSED) + MEDIUM (DEFINER_SEARCH_PATH)
+create function public.f_reset_all() returns void language sql security definer as $$ delete from public.t_good $$;
+grant execute on function public.f_reset_all() to anon, authenticated;
+
+-- 12) SECURITY DEFINER scoped to the caller, pinned search_path  -> INFO only
+create function public.f_my_rows() returns setof public.t_good language sql security definer set search_path = ''
+  as $$ select * from public.t_good where user_id = auth.uid() $$;
+revoke execute on function public.f_my_rows() from public, anon;
+grant execute on function public.f_my_rows() to authenticated;

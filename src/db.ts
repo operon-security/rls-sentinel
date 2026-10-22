@@ -1,5 +1,5 @@
 import { Client } from 'pg'
-import { Schema, TableInfo, PolicyInfo, GrantInfo, OwnerColumn } from './types'
+import { Schema, TableInfo, PolicyInfo, GrantInfo, OwnerColumn, ViewInfo, DefinerFunction } from './types'
 
 // Column names that mark a table as "user-owned" in a typical multi-tenant app.
 // Extend this list for your own conventions.
@@ -61,6 +61,37 @@ const Q_OWNER_COLS = `
     and a.attname = any($2::text[])
 `
 
+// Views run with their OWNER's rights unless created with security_invoker=true
+// (Postgres 15+), so a view over an RLS-protected table can hand every row to the
+// API. Materialized views cannot be security_invoker at all.
+const Q_VIEWS = `
+  select c.relname as view, c.relkind as kind,
+    coalesce(c.reloptions::text[] && array['security_invoker=true','security_invoker=on','security_invoker=1'], false) as invoker,
+    has_table_privilege('anon', c.oid, 'SELECT') as anon_select,
+    has_table_privilege('authenticated', c.oid, 'SELECT') as auth_select
+  from pg_class c
+  join pg_namespace n on n.oid = c.relnamespace
+  where n.nspname = $1 and c.relkind in ('v', 'm')
+  order by c.relname
+`
+
+// SECURITY DEFINER functions run as their owner (usually postgres, which bypasses
+// RLS) and are callable through /rest/v1/rpc. Trigger functions and extension
+// members are skipped: they are not callable that way.
+const Q_DEFINER_FUNCS = `
+  select p.proname as name, pg_get_function_identity_arguments(p.oid) as args,
+    has_function_privilege('anon', p.oid, 'EXECUTE') as anon_exec,
+    has_function_privilege('authenticated', p.oid, 'EXECUTE') as auth_exec,
+    coalesce(exists(select 1 from unnest(p.proconfig) cfg where cfg like 'search_path=%'), false) as pinned_search_path,
+    (p.prosrc ilike '%auth.uid()%') as uses_uid
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  where n.nspname = $1 and p.prokind = 'f' and p.prosecdef
+    and p.prorettype <> 'trigger'::regtype
+    and not exists (select 1 from pg_depend dep where dep.objid = p.oid and dep.deptype = 'e')
+  order by p.proname
+`
+
 export async function introspect(
   connectionString: string,
   schema: string
@@ -86,6 +117,8 @@ export async function introspect(
     const policies = await client.query(Q_POLICIES, [schema])
     const grants = await client.query(Q_GRANTS, [schema])
     const ownerCols = await client.query(Q_OWNER_COLS, [schema, OWNERSHIP_COLUMNS])
+    const views = await client.query(Q_VIEWS, [schema])
+    const funcs = await client.query(Q_DEFINER_FUNCS, [schema])
 
     return {
       // Map explicitly: the query returns snake_case columns. Casting the raw rows
@@ -109,6 +142,25 @@ export async function introspect(
       ),
       grants: grants.rows as GrantInfo[],
       ownerColumns: ownerCols.rows as OwnerColumn[],
+      views: views.rows.map(
+        (r): ViewInfo => ({
+          view: r.view,
+          kind: r.kind === 'm' ? 'm' : 'v',
+          invoker: r.invoker === true,
+          anonSelect: r.anon_select === true,
+          authSelect: r.auth_select === true,
+        })
+      ),
+      definerFunctions: funcs.rows.map(
+        (r): DefinerFunction => ({
+          name: r.name,
+          args: r.args ?? '',
+          anonExec: r.anon_exec === true,
+          authExec: r.auth_exec === true,
+          pinnedSearchPath: r.pinned_search_path === true,
+          usesUid: r.uses_uid === true,
+        })
+      ),
     }
   } finally {
     await client.end()
