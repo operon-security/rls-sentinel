@@ -2,6 +2,7 @@
 import { parseArgs } from 'node:util'
 import { writeFileSync } from 'node:fs'
 import { introspect } from './db'
+import { connectionHint } from './hints'
 import { audit } from './checks'
 import { renderTerminal, renderHtml, renderJson, summarize } from './report'
 import { Severity, SEVERITY_ORDER } from './types'
@@ -20,11 +21,20 @@ Options:
       --out <file>        Write the report to a file instead of stdout.
       --fail-on <sev>     Exit 1 if any finding is at or above this severity
                           (critical|high|medium|low). Useful in CI.
+      --ca <file>         Verify the server certificate against this CA (PEM).
+                          Supabase: Project Settings -> Database -> SSL
+                          Configuration -> Download certificate.
   -h, --help              Show this help.
 
 Where to get the connection string:
-  Supabase dashboard -> Project Settings -> Database -> Connection string
-  (use the "URI" / session pooler value; it already includes your password).
+  Supabase dashboard -> Connect -> Session pooler (works on IPv4 networks).
+  The direct host db.<ref>.supabase.co is IPv6-only unless the project has
+  the IPv4 add-on.
+
+TLS:
+  Always on. Without --ca the traffic is encrypted but the server certificate
+  is not verified, and every run says so. sslmode/sslrootcert in the URL are
+  honoured as pg implements them (pg treats sslmode=require as verify-full).
 `
 
 function atOrAbove(sev: Severity, threshold: Severity): boolean {
@@ -39,6 +49,7 @@ async function main() {
       format: { type: 'string', default: 'terminal' },
       out: { type: 'string' },
       'fail-on': { type: 'string' },
+      ca: { type: 'string' },
       help: { type: 'boolean', short: 'h', default: false },
     },
   })
@@ -64,16 +75,36 @@ async function main() {
     return
   }
 
+  // pg lets ssl, sslmode, sslrootcert, sslcert and sslkey in the URL replace the
+  // ssl option in code (measured: ?ssl=true turns {ca, ...} into plain `true`),
+  // so with both present --ca would be silently ignored. Refuse instead.
+  const caFile = values.ca
+  if (caFile && /[?&](ssl|sslmode|sslrootcert|sslcert|sslkey)=/i.test(url)) {
+    process.stderr.write('error: use either --ca or ssl parameters in the URL (ssl, sslmode, sslrootcert, ...), not both.\n')
+    process.exitCode = 2
+    return
+  }
+
   // Redact the password from the target label we print/store.
   const target = url.replace(/:\/\/([^:@/]+):[^@]*@/, '://$1:****@')
 
   let findings
   try {
-    const sch = await introspect(url, schema)
+    const { schema: sch, tls } = await introspect(url, schema, { caFile })
+    if (tls === 'unverified') {
+      process.stderr.write(
+        'note: TLS is on, but the server certificate was not verified. To verify it, pass\n' +
+          '      --ca <CA file> (Supabase: Project Settings -> Database -> SSL Configuration).\n'
+      )
+    } else if (tls === 'off') {
+      process.stderr.write('note: TLS is off for this connection (sslmode=disable in the URL).\n')
+    }
     findings = audit(schema, sch)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     process.stderr.write(`error: could not audit database: ${msg}\n`)
+    const hint = connectionHint(e, url, { caFile })
+    if (hint) process.stderr.write(`${hint}\n`)
     process.exitCode = 2
     return
   }
