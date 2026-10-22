@@ -35,8 +35,12 @@ and reports exactly where a multi-tenant app leaks — with the fix for each.
 ```bash
 git clone https://github.com/operon-security/rls-sentinel
 cd rls-sentinel && npm install && npm run build
-node dist/index.js --url "postgresql://postgres:PASSWORD@db.YOURPROJECT.supabase.co:5432/postgres"
+node dist/index.js --url "postgresql://postgres.YOURREF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres"
 ```
+
+Copy the URL from **Supabase → Connect → Session pooler**. The direct host
+`db.<ref>.supabase.co` is IPv6-only unless your project has the IPv4 add-on, so on
+most home and office networks it times out — the CLI tells you this if it happens.
 
 ## What it checks
 
@@ -63,19 +67,35 @@ npm install
 npm run build
 
 # point it at your database (read-only; it only inspects catalogs)
-node dist/index.js --url "postgresql://postgres:PASSWORD@db.YOURPROJECT.supabase.co:5432/postgres"
+node dist/index.js --url "postgresql://postgres.YOURREF:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres"
 
 # or
 export DATABASE_URL="postgresql://..."
 node dist/index.js
 ```
 
-Get the connection string from **Supabase dashboard → Project Settings →
-Database → Connection string (URI)**. The audit runs six `SELECT`s against
-the Postgres system catalogs (`pg_class`, `pg_policy`, `pg_attribute`, `pg_proc`,
-`information_schema.role_table_grants`). It never reads your table data, and the
-session is set to `READ ONLY` at the database level before the first query, so
-Postgres itself would reject any write.
+Get the connection string from **Supabase → Connect → Session pooler**. The audit
+runs six `SELECT`s against the Postgres system catalogs (`pg_class`, `pg_policy`,
+`pg_attribute`, `pg_proc`, `information_schema.role_table_grants`) and never reads
+your table data. All six run inside one `BEGIN READ ONLY` transaction that is
+rolled back at the end, so Postgres itself rejects any write — including behind
+Supabase's transaction pooler, where a session-level setting would not hold.
+
+### TLS
+
+TLS is always on. Supabase signs its certificates with its own CA, which Node does
+not trust by default, so out of the box the connection is **encrypted but the server
+is not authenticated** — and every run prints a note saying so. To verify the
+server, download your project's CA (**Project Settings → Database → SSL
+Configuration → Download certificate**) and pass it:
+
+```bash
+node dist/index.js --url "postgresql://..." --ca ./supabase-ca.crt
+```
+
+`sslmode` / `sslrootcert` in the URL work too, the way `pg` implements them. Note
+that `pg` treats `sslmode=require` as `verify-full`, so `?sslmode=require` without
+the CA fails — the error message says what to do instead.
 
 ## Output formats & CI
 
@@ -112,6 +132,12 @@ Summary:  3 crit   3 high   3 med   8 low   7 info      Verdict: AT RISK
 Every planted issue is reported, the `security_invoker` view is not flagged, the correctly secured table gets INFO only and the
 `FORCE ROW LEVEL SECURITY` table gets no findings. `--format json`, `--format html`
 and `--fail-on high` (exit code 1) were verified by hand on the table cases.
+
+The connection layer has its own unit tests (`npm test`, also in CI): the TLS state
+as `pg` actually resolves it, and the first-run hints. The TLS paths — `--ca` with
+the right and the wrong CA, `sslmode=require`, `verify-full` + `sslrootcert`,
+`sslmode=disable` — were verified by hand against a TLS-enabled Postgres 16 with a
+private CA, the same setup Supabase uses.
 
 ## License
 

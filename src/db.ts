@@ -1,5 +1,24 @@
+import { readFileSync } from 'node:fs'
 import { Client } from 'pg'
 import { Schema, TableInfo, PolicyInfo, GrantInfo, OwnerColumn, ViewInfo, DefinerFunction } from './types'
+
+const STATEMENT_TIMEOUT_MS = 20_000
+
+/** What TLS actually protected this connection, read from the config pg resolved. */
+export type TlsState = 'verified' | 'unverified' | 'off'
+
+// pg merges `sslmode`/`sslrootcert` from the connection string OVER the `ssl`
+// option passed in code, so the only honest answer comes from what pg resolved.
+// Anything we can't recognise is reported as unverified, never as verified.
+export function tlsState(client: Client): TlsState {
+  const ssl = (client as unknown as { connectionParameters?: { ssl?: unknown } }).connectionParameters?.ssl
+  if (ssl === false) return 'off'
+  if (ssl === true) return 'verified'
+  if (ssl && typeof ssl === 'object' && (ssl as { rejectUnauthorized?: boolean }).rejectUnauthorized !== false) {
+    return 'verified'
+  }
+  return 'unverified'
+}
 
 // Column names that mark a table as "user-owned" in a typical multi-tenant app.
 // Extend this list for your own conventions.
@@ -94,24 +113,35 @@ const Q_DEFINER_FUNCS = `
 
 export async function introspect(
   connectionString: string,
-  schema: string
-): Promise<Schema> {
+  schema: string,
+  opts: { caFile?: string } = {}
+): Promise<{ schema: Schema; tls: TlsState }> {
   const client = new Client({
     connectionString,
-    // Supabase (and most managed Postgres) require TLS. We don't pin the CA
-    // here because connection strings vary; the traffic is still encrypted.
-    ssl: { rejectUnauthorized: false },
+    // TLS is always on. Supabase signs its certificates with its own CA, which
+    // is not in Node's trust store, so verification needs that CA (--ca). Without
+    // it the traffic is encrypted but the server is not authenticated — the CLI
+    // says so on every run instead of leaving it implicit.
+    ssl: opts.caFile
+      ? { ca: readFileSync(opts.caFile, 'utf8'), rejectUnauthorized: true }
+      : { rejectUnauthorized: false },
     // Fail fast instead of hanging on an unreachable host.
     connectionTimeoutMillis: 15_000,
-    statement_timeout: 20_000,
+    // No `statement_timeout` here: pg sends it as a startup parameter, which some
+    // poolers reject. It is set with SET LOCAL inside the transaction below.
   })
+  const tls = tlsState(client)
 
   await client.connect()
   try {
-    // Defence in depth: every query below only reads system catalogs, but the
-    // session is also made read-only at the database level, so a future change
-    // that tries to write is rejected by Postgres instead of trusted to code review.
-    await client.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY')
+    // Defence in depth: every query below only reads system catalogs, and they
+    // all run inside ONE read-only transaction that is rolled back at the end, so
+    // a future change that tries to write is rejected by Postgres itself. A
+    // session-level SET would not hold behind a transaction pooler (Supabase
+    // :6543): the next statement can land on another backend. A transaction
+    // keeps one backend for its whole life.
+    await client.query('BEGIN READ ONLY')
+    await client.query(`SET LOCAL statement_timeout = ${STATEMENT_TIMEOUT_MS}`)
     // One client runs one query at a time; issue them in order.
     const tables = await client.query(Q_TABLES, [schema])
     const policies = await client.query(Q_POLICIES, [schema])
@@ -120,7 +150,7 @@ export async function introspect(
     const views = await client.query(Q_VIEWS, [schema])
     const funcs = await client.query(Q_DEFINER_FUNCS, [schema])
 
-    return {
+    const result: Schema = {
       // Map explicitly: the query returns snake_case columns. Casting the raw rows
       // left rlsEnabled undefined, so every table was reported as RLS-disabled.
       tables: tables.rows.map(
@@ -162,7 +192,10 @@ export async function introspect(
         })
       ),
     }
+    return { schema: result, tls }
   } finally {
+    // Nothing was written, so there is nothing to keep: always roll back.
+    await client.query('ROLLBACK').catch(() => {})
     await client.end()
   }
 }

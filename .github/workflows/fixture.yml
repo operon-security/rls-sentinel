@@ -20,6 +20,8 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npm run build
+      - name: Connection layer unit tests
+        run: npm test
       - name: Load planted leaks
         run: psql "postgresql://postgres:postgres@localhost:5432/postgres" -v ON_ERROR_STOP=1 -f test/fixture.sql
       - name: Scan
