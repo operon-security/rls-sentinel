@@ -229,5 +229,64 @@ export function audit(schema: string, s: Schema): Finding[] {
     }
   }
 
+  // 10. Views reachable by the API that run with the owner's rights. The owner is
+  //     normally postgres (bypasses RLS), so the view returns rows the caller's
+  //     own policies would hide. Same class as Supabase's "security definer view".
+  for (const v of s.views ?? []) {
+    const reach = [v.anonSelect && 'anon', v.authSelect && 'authenticated'].filter(Boolean) as string[]
+    if (reach.length === 0 || v.invoker) continue
+    const mat = v.kind === 'm'
+    findings.push({
+      check: mat ? 'MATVIEW_EXPOSED' : 'VIEW_BYPASSES_RLS',
+      severity: v.anonSelect ? 'CRITICAL' : 'HIGH',
+      table: v.view,
+      title: mat ? 'Materialized view is readable by API roles' : 'View bypasses RLS (not security_invoker)',
+      detail:
+        `${mat ? 'Materialized view' : 'View'} "${v.view}" is selectable by ${reach.join('/')} and runs with its ` +
+        `owner's rights, so Row Level Security on the underlying tables does not apply to it.` +
+        (mat ? ' Materialized views cannot be security_invoker; their stored rows have no RLS at all.' : ''),
+      remediation: mat
+        ? `revoke select on "${schema}"."${v.view}" from anon, authenticated;  -- serve it through an RLS-protected table or a scoped function instead`
+        : `alter view "${schema}"."${v.view}" set (security_invoker = true);  -- Postgres 15+; or revoke select from anon, authenticated`,
+    })
+  }
+
+  // 11. SECURITY DEFINER functions callable through /rest/v1/rpc. They run as the
+  //     owner and skip RLS, so each one must scope its own reads/writes to the
+  //     caller. The catalog can't prove that; we flag it and say why.
+  for (const f of s.definerFunctions ?? []) {
+    const sig = `${f.name}(${f.args})`
+    const reach = [f.anonExec && 'anon', f.authExec && 'authenticated'].filter(Boolean) as string[]
+    if (reach.length > 0) {
+      findings.push({
+        check: 'DEFINER_FUNCTION_EXPOSED',
+        severity: f.usesUid ? 'INFO' : f.anonExec ? 'HIGH' : 'MEDIUM',
+        table: null,
+        title: `SECURITY DEFINER function callable by ${reach.join('/')}`,
+        detail:
+          `"${schema}.${sig}" runs with its owner's rights (RLS does not apply inside it) and ` +
+          `${reach.join('/')} can call it via /rest/v1/rpc. ` +
+          (f.usesUid
+            ? 'Its body references auth.uid(), which suggests it scopes to the caller: verify every query in it does.'
+            : 'Its body never references auth.uid(), so nothing visible ties its reads/writes to the caller.'),
+        remediation: f.usesUid
+          ? `Review the body: every table access should filter on auth.uid().`
+          : `revoke execute on function "${schema}".${sig} from ${reach.join(', ')}${f.anonExec ? ', public' : ''};  -- or make it security invoker, or filter on auth.uid() inside`,
+      })
+    }
+    // 12. A definer function without a pinned search_path can be hijacked by an
+    //     object of the same name earlier on the caller's search_path.
+    if (!f.pinnedSearchPath) {
+      findings.push({
+        check: 'DEFINER_SEARCH_PATH',
+        severity: reach.length > 0 ? 'MEDIUM' : 'LOW',
+        table: null,
+        title: 'SECURITY DEFINER function has a mutable search_path',
+        detail: `"${schema}.${sig}" does not pin search_path, so unqualified names inside it resolve at call time and can be shadowed.`,
+        remediation: `alter function "${schema}".${sig} set search_path = '';  -- then schema-qualify every object in the body`,
+      })
+    }
+  }
+
   return findings
 }
