@@ -1,5 +1,7 @@
 # RLS Sentinel
 
+[![fixture](https://github.com/operon-security/rls-sentinel/actions/workflows/fixture.yml/badge.svg)](https://github.com/operon-security/rls-sentinel/actions/workflows/fixture.yml)
+
 **Find the data leak in your Supabase app before your users — or an attacker — do.**
 
 Supabase hands you a Postgres database with an API key that ships straight to
@@ -98,22 +100,18 @@ fails the build instead of leaking in production.
 
 ## Tested against planted leaks
 
-`test/fixture.sql` builds one table per check, each with a known expected result,
-plus two correctly secured tables. Load it into any Postgres and point the scanner
-at it (`?sslmode=disable` for a local server without TLS). Measured result:
+`test/fixture.sql` plants one leak per check (tables, views and `SECURITY DEFINER`
+functions) next to correctly secured objects. CI loads it into a real Postgres 17 on
+every push, runs the scanner and asserts the known answer (`test/expect.js`).
+Measured result:
 
 ```
-Summary:  2 crit   2 high   2 med   8 low   6 info      Verdict: AT RISK
+Summary:  3 crit   3 high   3 med   8 low   7 info      Verdict: AT RISK
 ```
 
-That summary was measured on cases 1-8 (the table checks). Cases 9-12 (views and
-`SECURITY DEFINER` functions) were added later; their logic is tested on synthetic
-input and the queries were run against a live Supabase schema, but the full fixture
-has not been re-measured yet.
-
-Every planted table issue is reported; the correctly secured table gets INFO only and the
+Every planted issue is reported, the `security_invoker` view is not flagged, the correctly secured table gets INFO only and the
 `FORCE ROW LEVEL SECURITY` table gets no findings. `--format json`, `--format html`
-and `--fail-on high` (exit code 1) were verified on the same fixture.
+and `--fail-on high` (exit code 1) were verified by hand on the table cases.
 
 ## License
 
