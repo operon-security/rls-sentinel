@@ -112,15 +112,23 @@ export function audit(schema: string, s: Schema): Finding[] {
       if (!appliesToClient) continue
 
       // 3. Read/ALL policy that lets every row through (USING true).
+      //    Only a leak if the table is actually granted to a client role: a
+      //    permissive policy on a table anon/authenticated can't SELECT is not
+      //    reachable through the API. We still report it (a later GRANT — or
+      //    Supabase's default privileges — turns it critical), but the severity
+      //    reflects reachability instead of assuming it.
       if ((p.cmd === 'SELECT' || p.cmd === 'ALL') && isUnrestricted(p.usingExpr)) {
         findings.push({
           check: 'POLICY_UNRESTRICTED',
-          severity: 'CRITICAL',
+          severity: exposedToClient ? 'CRITICAL' : 'LOW',
           table,
           title: 'Policy exposes all rows (USING true)',
-          detail:
-            `Policy "${p.name}" on "${table}" (${p.cmd}) uses USING (true) for the ` +
-            `${p.roles.length ? p.roles.join('/') : 'public'} role, so any client reads every row in the table.`,
+          detail: exposedToClient
+            ? `Policy "${p.name}" on "${table}" (${p.cmd}) uses USING (true) for the ` +
+              `${p.roles.length ? p.roles.join('/') : 'public'} role, so any client reads every row in the table.`
+            : `Policy "${p.name}" on "${table}" (${p.cmd}) uses USING (true), but "${table}" is not ` +
+              `granted to anon/authenticated, so it is not reachable through the API as configured. ` +
+              `Fix it anyway: a later GRANT — or Supabase's default privileges on new tables — makes it a critical leak.`,
           remediation: `Replace with an ownership check, e.g. using (auth.uid() = user_id).`,
         })
       }
@@ -133,12 +141,15 @@ export function audit(schema: string, s: Schema): Finding[] {
       ) {
         findings.push({
           check: 'POLICY_LOGGED_IN_ONLY',
-          severity: 'HIGH',
+          severity: exposedToClient ? 'HIGH' : 'LOW',
           table,
           title: 'Policy checks authentication, not ownership',
-          detail:
-            `Policy "${p.name}" on "${table}" (${p.cmd}) only requires the caller to be ` +
-            `logged in (no auth.uid() = owner check). Any authenticated user can reach every other user's rows.`,
+          detail: exposedToClient
+            ? `Policy "${p.name}" on "${table}" (${p.cmd}) only requires the caller to be ` +
+              `logged in (no auth.uid() = owner check). Any authenticated user can reach every other user's rows.`
+            : `Policy "${p.name}" on "${table}" (${p.cmd}) checks only that the caller is logged in, ` +
+              `but "${table}" is not granted to anon/authenticated, so it is not reachable as configured. ` +
+              `Fix it anyway: once the table is granted, any authenticated user reaches every row.`,
           remediation: `Add an ownership predicate, e.g. using (auth.uid() = user_id).`,
         })
       }
